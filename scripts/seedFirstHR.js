@@ -34,7 +34,7 @@ const seedFirstHR = async () => {
     console.log('🔑 JWT_SECRET length:', JWT_SECRET.length);
     
     // Connect to database
-    conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hrms');
+    conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ERP');
     console.log('✅ Database connected');
     
     // Check if HR already exists

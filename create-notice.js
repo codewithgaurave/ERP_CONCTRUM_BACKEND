@@ -10,8 +10,8 @@ const createSimpleNotice = async () => {
     await mongoose.connect(process.env.MONGODB_URI);
     
     const notice = new Notice({
-      title: "Welcome to HRMS System",
-      content: "Welcome to our new HRMS system. Please explore all the features available to you including payroll, assets, and leave management.",
+      title: "Welcome to ERP System",
+      content: "Welcome to our new ERP system. Please explore all the features available to you including payroll, assets, and leave management.",
       type: "General",
       priority: "Medium",
       createdBy: "694ce2e28c312831c707d204", // Test employee ID

@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "HRMS Asset Transfer & History APIs",
+    "name": "ERP Asset Transfer & History APIs",
     "description": "Complete collection for Employee Asset Transfer and History tracking",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

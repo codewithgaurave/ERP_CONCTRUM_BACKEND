@@ -1,5 +1,5 @@
 {
-  "name": "hrms-backend",
+  "name": "ERP-backend",
   "version": "1.0.0",
   "description": "��#\u0000 \u0000D\u0000C\u0000T\u0000-\u0000H\u0000R\u0000M\u0000S\u0000-\u0000B\u0000a\u0000c\u0000k\u0000e\u0000n\u0000d\u0000\r\u0000 \u0000",
   "main": "app.js",
@@ -11,15 +11,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Prabha-Raj/DCT-HRMS-Backend.git"
+    "url": "git+https://github.com/Prabha-Raj/DCT-ERP-Backend.git"
   },
   "keywords": [],
-  "author": "Prabhakar Rajput",
+  "author": "Gaurav Gupta",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/Prabha-Raj/DCT-HRMS-Backend/issues"
+    "url": "https://github.com/Prabha-Raj/DCT-ERP-Backend/issues"
   },
-  "homepage": "https://github.com/Prabha-Raj/DCT-HRMS-Backend#readme",
+  "homepage": "https://github.com/Prabha-Raj/DCT-ERP-Backend#readme",
   "dependencies": {
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

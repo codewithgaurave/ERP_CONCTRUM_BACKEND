@@ -4,7 +4,7 @@ import Employee from './models/Employee.js';
 
 const connectDB = async () => {
   try {
-    await mongoose.connect('mongodb://localhost:27017/hrms');
+    await mongoose.connect('mongodb://localhost:27017/ERP');
     console.log('MongoDB connected');
   } catch (error) {
     console.error('MongoDB connection error:', error);

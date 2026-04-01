@@ -10,7 +10,7 @@ import LeavePolicy from '../models/LeavePolicy.js';
 const addHrIdToSettings = async () => {
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hrms');
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ERP');
     
     // Find the first HR user to assign existing data to
     const hrUser = await Employee.findOne({ role: 'HR_Manager' });

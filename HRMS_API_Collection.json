@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "HRMS Backend API Collection",
-    "description": "Complete API collection for HRMS Backend System",
+    "name": "ERP Backend API Collection",
+    "description": "Complete API collection for ERP Backend System",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [

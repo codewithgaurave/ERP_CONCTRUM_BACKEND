@@ -92,7 +92,7 @@ app.use("/api/employee-form-links", employeeFormLinkRoutes);
 
 // default 
 app.get('/', (req, res) => {
-  res.send("HRMS_Server is running.............../")
+  res.send("ERP_Server is running.............../")
 });
 
 // Health check endpoint
