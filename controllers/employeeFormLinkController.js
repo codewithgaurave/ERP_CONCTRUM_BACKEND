@@ -182,21 +182,26 @@ export const submitPublicForm = async (req, res) => {
     }
 
     const { firstName, lastName, email, mobile, alternateMobile, whatsappNumber, gender, dob,
-      street, city, state, country, pincode, answers } = req.body;
+      street, city, state, country, pincode, 
+      bankName, accountNumber, ifscCode, accountHolderName, branchName,
+      answers } = req.body;
 
     if (!firstName || !lastName || !email || !mobile) {
       return res.status(400).json({ message: 'First name, last name, email, and mobile are required.' });
     }
 
-    // Validate required custom fields
-    for (const field of formLink.fields) {
-      if (field.fieldType === 'section_break') continue;
-      if (field.required) {
-        const answer = answers?.[field.id];
-        const isEmpty = !answer || (Array.isArray(answer) && answer.length === 0) || answer === '';
-        if (isEmpty) {
-          return res.status(400).json({ message: `"${field.label}" is required.` });
+    // Parse answers if it's a string
+    let parsedAnswers = {};
+    if (answers) {
+      if (typeof answers === 'string') {
+        try {
+          parsedAnswers = JSON.parse(answers);
+        } catch (e) {
+          console.error('Error parsing answers:', e);
+          parsedAnswers = {};
         }
+      } else {
+        parsedAnswers = answers;
       }
     }
 
@@ -209,12 +214,25 @@ export const submitPublicForm = async (req, res) => {
       });
     }
 
-    const mergedAnswers = { ...(answers || {}), ...fileAnswers };
+    const mergedAnswers = { ...parsedAnswers, ...fileAnswers };
+
+    // Validate required custom fields
+    for (const field of formLink.fields) {
+      if (field.fieldType === 'section_break') continue;
+      if (field.required) {
+        const answer = mergedAnswers?.[field.id];
+        const isEmpty = !answer || (Array.isArray(answer) && answer.length === 0) || answer === '';
+        if (isEmpty) {
+          return res.status(400).json({ message: `"${field.label}" is required.` });
+        }
+      }
+    }
 
     formLink.submissions.push({
       firstName, lastName, email, mobile,
       alternateMobile, whatsappNumber, gender, dob,
       street, city, state, country, pincode,
+      bankName, accountNumber, ifscCode, accountHolderName, branchName,
       answers: mergedAnswers
     });
 

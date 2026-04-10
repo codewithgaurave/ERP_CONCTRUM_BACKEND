@@ -41,6 +41,13 @@ const submissionSchema = new mongoose.Schema({
   country: { type: String, trim: true, default: 'India' },
   pincode: { type: String, trim: true },
 
+  // Bank Details
+  bankName: { type: String, trim: true },
+  accountNumber: { type: String, trim: true },
+  ifscCode: { type: String, trim: true },
+  accountHolderName: { type: String, trim: true },
+  branchName: { type: String, trim: true },
+
   // Dynamic answers: { fieldId: value }
   // value can be string, array (checkbox), or file path
   answers: { type: Map, of: mongoose.Schema.Types.Mixed, default: {} },
@@ -79,7 +86,8 @@ const employeeFormLinkSchema = new mongoose.Schema({
   // Include/exclude default base fields
   includeBaseFields: {
     personalInfo: { type: Boolean, default: true },
-    address: { type: Boolean, default: true }
+    address: { type: Boolean, default: true },
+    bankDetails: { type: Boolean, default: false }
   },
 
   submissions: [submissionSchema]

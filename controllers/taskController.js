@@ -1,10 +1,13 @@
 import Task from "../models/Task.js";
 import Employee from "../models/Employee.js";
 
-// 📌 Create Task (Team Leader only — can assign to own team members only)
+// 📌 Create Task (HR Manager can assign to Team Leaders, Team Leader can assign to Employees)
 export const createTask = async (req, res) => {
   try {
-    const { title, description, assignedTo, priority, dueDate, deadline } = req.body;
+    const { 
+      title, description, assignedTo, priority, dueDate, deadline, 
+      taskType, targetCount, formFields 
+    } = req.body;
 
     if (!title || !assignedTo || !deadline) {
       return res.status(400).json({ success: false, message: "Title, assignedTo, and deadline are required." });
@@ -14,34 +17,48 @@ export const createTask = async (req, res) => {
       return res.status(400).json({ success: false, message: "Deadline must be in the future." });
     }
 
-    // Team Leader can only assign to their own team members
-    if (req.employee.role === 'Team_Leader') {
-      const teamMember = await Employee.findOne({ _id: assignedTo, manager: req.employee._id });
-      if (!teamMember) {
-        return res.status(403).json({ success: false, message: "You can only assign tasks to your own team members." });
-      }
-    }
-
     const assignedEmployee = await Employee.findById(assignedTo);
     if (!assignedEmployee) {
       return res.status(404).json({ success: false, message: "Assigned employee not found." });
     }
 
+    // Role-based assignment validation
+    if (req.employee.role === 'HR_Manager') {
+      // HR Manager can assign to Team Leaders or Employees
+      if (!['Team_Leader', 'Employee'].includes(assignedEmployee.role)) {
+        return res.status(403).json({ success: false, message: "HR Manager can only assign tasks to Team Leaders or Employees." });
+      }
+    } else if (req.employee.role === 'Team_Leader') {
+      // Team Leader can only assign to their own team members
+      const teamMember = await Employee.findOne({ _id: assignedTo, manager: req.employee._id });
+      if (!teamMember) {
+        return res.status(403).json({ success: false, message: "You can only assign tasks to your own team members." });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: "Only HR Managers and Team Leaders can create tasks." });
+    }
+
     const task = await Task.create({
-      title, description,
+      title, 
+      description,
+      taskType: taskType || 'Custom',
       assignedBy: req.employee._id,
       assignedTo,
       priority,
       dueDate,
       deadline: new Date(deadline),
+      targetCount: targetCount || 1,
+      formFields: formFields || [],
       status: "Assigned",
       taskHistory: [{ status: "Assigned", updatedBy: req.employee._id, remarks: "Task created and assigned" }],
     });
 
     const populatedTask = await Task.findById(task._id)
-      .populate("assignedBy", "name email employeeId")
-      .populate("assignedTo", "name email employeeId")
-      .populate("taskHistory.updatedBy", "name email employeeId");
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
+      .populate("taskHistory.updatedBy", "name email employeeId")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId");
 
     res.status(201).json({ success: true, message: "Task created successfully.", task: populatedTask });
   } catch (error) {
@@ -49,18 +66,23 @@ export const createTask = async (req, res) => {
   }
 };
 
-// 📌 Get All Tasks — Team Leader sees only tasks they created
+// 📌 Get All Tasks — HR Manager sees all tasks, Team Leader sees only tasks they created
 export const getAllTasks = async (req, res) => {
   try {
-    const { search, status, priority, assignedTo, deadlineStatus, sortBy = "createdAt", sortOrder = "desc", isActive } = req.query;
+    const { search, status, priority, assignedTo, deadlineStatus, taskType, sortBy = "createdAt", sortOrder = "desc", isActive } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
 
     const filter = {};
 
-    // Team Leader sees only tasks they assigned
-    if (req.employee.role === 'Team_Leader') {
+    // Role-based filtering
+    if (req.employee.role === 'HR_Manager') {
+      // HR Manager sees all tasks
+    } else if (req.employee.role === 'Team_Leader') {
+      // Team Leader sees only tasks they assigned
       filter.assignedBy = req.employee._id;
+    } else {
+      return res.status(403).json({ success: false, message: "Access denied. Only HR Managers and Team Leaders can view all tasks." });
     }
 
     if (isActive === "true") filter.isActive = true;
@@ -70,6 +92,7 @@ export const getAllTasks = async (req, res) => {
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (assignedTo) filter.assignedTo = assignedTo;
+    if (taskType) filter.taskType = taskType;
 
     if (deadlineStatus) {
       const now = new Date();
@@ -82,9 +105,13 @@ export const getAllTasks = async (req, res) => {
     }
 
     const tasks = await Task.find(filter)
-      .populate("assignedBy", "name email employeeId")
-      .populate("assignedTo", "name email employeeId")
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
       .populate("taskHistory.updatedBy", "name email employeeId")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId")
+      .populate("parentTask", "title")
+      .populate("subTasks", "title status currentCount targetCount")
       .sort({ [sortBy]: sortOrder === "desc" ? -1 : 1 })
       .limit(limit)
       .skip((page - 1) * limit);
@@ -100,7 +127,7 @@ export const getAllTasks = async (req, res) => {
 // 📌 Get My Tasks (Employee)
 export const getMyTasks = async (req, res) => {
   try {
-    const { status, priority, deadlineStatus } = req.query;
+    const { status, priority, deadlineStatus, taskType } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     
@@ -111,6 +138,7 @@ export const getMyTasks = async (req, res) => {
     
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
+    if (taskType) filter.taskType = taskType;
 
     // Deadline status filter
     if (deadlineStatus) {
@@ -139,9 +167,12 @@ export const getMyTasks = async (req, res) => {
     }
 
     const tasks = await Task.find(filter)
-      .populate("assignedBy", "name email employeeId")
-      .populate("assignedTo", "name email employeeId")
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
       .populate("taskHistory.updatedBy", "name email employeeId")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId")
+      .populate("parentTask", "title")
       .sort({ deadline: 1, createdAt: -1 })
       .limit(limit)
       .skip((page - 1) * limit);
@@ -238,7 +269,7 @@ export const updateTaskStatus = async (req, res) => {
   }
 };
 
-// 📌 Approve/Reject Task (Team Leader — only tasks they assigned)
+// 📌 Approve/Reject Task (HR Manager can review all completed tasks, Team Leader can review tasks they assigned)
 export const reviewTask = async (req, res) => {
   try {
     const { status, remarks } = req.body;
@@ -247,12 +278,19 @@ export const reviewTask = async (req, res) => {
     if (!remarks) return res.status(400).json({ success: false, message: "Remarks are required for task review." });
     if (!["Approved", "Rejected"].includes(status)) return res.status(400).json({ success: false, message: "Invalid status. Only Approved or Rejected allowed." });
 
-    const task = await Task.findById(taskId);
+    const task = await Task.findById(taskId).populate('assignedBy', 'role').populate('assignedTo', 'role');
     if (!task) return res.status(404).json({ success: false, message: "Task not found." });
 
-    // Team Leader can only review tasks they assigned
-    if (req.employee.role === 'Team_Leader' && task.assignedBy.toString() !== req.employee._id.toString()) {
-      return res.status(403).json({ success: false, message: "You can only review tasks that you assigned." });
+    // Access control based on role and task hierarchy
+    if (req.employee.role === 'HR_Manager') {
+      // HR Manager can review all completed tasks
+    } else if (req.employee.role === 'Team_Leader') {
+      // Team Leader can only review tasks they assigned
+      if (task.assignedBy.toString() !== req.employee._id.toString()) {
+        return res.status(403).json({ success: false, message: "You can only review tasks that you assigned." });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: "Only HR Managers and Team Leaders can review tasks." });
     }
 
     if (task.status !== "Completed") {
@@ -265,8 +303,8 @@ export const reviewTask = async (req, res) => {
     await task.save();
 
     const populatedTask = await Task.findById(task._id)
-      .populate("assignedBy", "name email employeeId")
-      .populate("assignedTo", "name email employeeId")
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
       .populate("taskHistory.updatedBy", "name email employeeId");
 
     res.json({ success: true, message: `Task ${status.toLowerCase()} successfully.`, task: populatedTask });
@@ -538,21 +576,29 @@ export const getTaskStats = async (req, res) => {
   }
 };
 
-// 📌 Get Assignable Employees — Team Leader sees only their team members
+// 📌 Get Assignable Employees — HR Manager sees Team Leaders and Employees, Team Leader sees only their team members
 export const getAssignableEmployees = async (req, res) => {
   try {
     let employees;
-    if (req.employee.role === 'Team_Leader') {
+    if (req.employee.role === 'HR_Manager') {
+      // HR Manager can assign to Team Leaders and Employees
+      employees = await Employee.find({ 
+        isActive: true, 
+        role: { $in: ['Team_Leader', 'Employee'] } 
+      })
+        .select('name email employeeId designation department role')
+        .populate('designation', 'title')
+        .populate('department', 'name');
+    } else if (req.employee.role === 'Team_Leader') {
+      // Team Leader can only assign to their team members
       employees = await Employee.find({ manager: req.employee._id, isActive: true })
-        .select('name email employeeId designation department')
+        .select('name email employeeId designation department role')
         .populate('designation', 'title')
         .populate('department', 'name');
     } else {
-      employees = await Employee.find({ isActive: true, role: { $in: ['Employee', 'Team_Leader'] } })
-        .select('name email employeeId designation department')
-        .populate('designation', 'title')
-        .populate('department', 'name');
+      return res.status(403).json({ success: false, message: "Only HR Managers and Team Leaders can get assignable employees." });
     }
+    
     res.json({ success: true, employees });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -599,13 +645,231 @@ export const getDeadlineAlerts = async (req, res) => {
   }
 };
 
+// 📌 Submit Task Response (Employee)
+export const submitTaskResponse = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { responses, remarks } = req.body;
+
+    const task = await Task.findById(taskId);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found." });
+    }
+
+    // Check if task is assigned to the employee or if it's a sub-task they can respond to
+    const canRespond = task.assignedTo.toString() === req.employee._id.toString() ||
+                      (task.parentTask && await Task.findOne({ 
+                        _id: task.parentTask, 
+                        subTasks: taskId,
+                        'subTasks': { $elemMatch: { assignedTo: req.employee._id } }
+                      }));
+
+    if (!canRespond) {
+      return res.status(403).json({ success: false, message: "You can only respond to tasks assigned to you." });
+    }
+
+    // Add response to task
+    const newResponse = {
+      submittedBy: req.employee._id,
+      responses: responses || {},
+      status: "Submitted",
+      submittedAt: new Date()
+    };
+
+    task.responses.push(newResponse);
+    task.currentCount = task.responses.filter(r => r.status !== 'Rejected').length;
+    
+    // Update task status based on progress
+    if (task.currentCount >= task.targetCount) {
+      task.status = "Completed";
+      task.statusRemarks = "All target responses collected";
+    } else {
+      task.status = "In Progress";
+      task.statusRemarks = `${task.currentCount}/${task.targetCount} responses collected`;
+    }
+
+    await task.save();
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId");
+
+    res.json({ 
+      success: true, 
+      message: "Response submitted successfully.", 
+      task: populatedTask,
+      progress: `${task.currentCount}/${task.targetCount}`
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 📌 Review Task Response (Team Leader/HR Manager)
+export const reviewTaskResponse = async (req, res) => {
+  try {
+    const { taskId, responseId } = req.params;
+    const { status, reviewRemarks } = req.body;
+
+    if (!['Approved', 'Rejected', 'Needs Review'].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid review status." });
+    }
+
+    const task = await Task.findById(taskId).populate('assignedBy', 'role');
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found." });
+    }
+
+    // Access control
+    if (req.employee.role === 'HR_Manager') {
+      // HR Manager can review all responses
+    } else if (req.employee.role === 'Team_Leader') {
+      // Team Leader can review responses for tasks they assigned
+      if (task.assignedBy.toString() !== req.employee._id.toString()) {
+        return res.status(403).json({ success: false, message: "You can only review responses for tasks you assigned." });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: "Only HR Managers and Team Leaders can review responses." });
+    }
+
+    const response = task.responses.id(responseId);
+    if (!response) {
+      return res.status(404).json({ success: false, message: "Response not found." });
+    }
+
+    response.status = status;
+    response.reviewedBy = req.employee._id;
+    response.reviewRemarks = reviewRemarks;
+    response.reviewedAt = new Date();
+
+    // Update task progress based on approved responses
+    task.currentCount = task.responses.filter(r => r.status === 'Approved').length;
+    
+    // Update overall task status
+    if (task.currentCount >= task.targetCount) {
+      task.status = "Completed";
+      task.statusRemarks = "Target achieved with approved responses";
+    } else {
+      const pendingCount = task.responses.filter(r => r.status === 'Submitted').length;
+      if (pendingCount === 0 && task.currentCount < task.targetCount) {
+        task.status = "Pending";
+        task.statusRemarks = "Waiting for more responses to meet target";
+      } else {
+        task.status = "In Progress";
+        task.statusRemarks = `${task.currentCount}/${task.targetCount} approved responses`;
+      }
+    }
+
+    await task.save();
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId");
+
+    res.json({ 
+      success: true, 
+      message: `Response ${status.toLowerCase()} successfully.`, 
+      task: populatedTask 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 📌 Create Sub-Tasks (Team Leader distributes main task to team members)
+export const createSubTasks = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { assignees, individualTargets } = req.body; // assignees: [employeeId], individualTargets: [count]
+
+    const parentTask = await Task.findById(taskId);
+    if (!parentTask) {
+      return res.status(404).json({ success: false, message: "Parent task not found." });
+    }
+
+    // Only assigned team leader can create sub-tasks
+    if (parentTask.assignedTo.toString() !== req.employee._id.toString()) {
+      return res.status(403).json({ success: false, message: "You can only create sub-tasks for tasks assigned to you." });
+    }
+
+    if (!assignees || assignees.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one assignee is required." });
+    }
+
+    // Validate assignees are team members
+    const teamMembers = await Employee.find({ 
+      _id: { $in: assignees }, 
+      manager: req.employee._id 
+    });
+
+    if (teamMembers.length !== assignees.length) {
+      return res.status(403).json({ success: false, message: "You can only assign sub-tasks to your team members." });
+    }
+
+    const subTasks = [];
+    for (let i = 0; i < assignees.length; i++) {
+      const assigneeId = assignees[i];
+      const target = individualTargets && individualTargets[i] ? individualTargets[i] : Math.ceil(parentTask.targetCount / assignees.length);
+      
+      const subTask = await Task.create({
+        title: `${parentTask.title} - Sub Task`,
+        description: parentTask.description,
+        taskType: parentTask.taskType,
+        assignedBy: req.employee._id,
+        assignedTo: assigneeId,
+        priority: parentTask.priority,
+        dueDate: parentTask.dueDate,
+        deadline: parentTask.deadline,
+        targetCount: target,
+        formFields: parentTask.formFields,
+        parentTask: parentTask._id,
+        status: "Assigned",
+        taskHistory: [{ 
+          status: "Assigned", 
+          updatedBy: req.employee._id, 
+          remarks: `Sub-task created from parent task: ${parentTask.title}` 
+        }]
+      });
+
+      subTasks.push(subTask._id);
+    }
+
+    // Update parent task with sub-tasks
+    parentTask.subTasks = subTasks;
+    parentTask.status = "In Progress";
+    parentTask.statusRemarks = `Distributed to ${assignees.length} team members`;
+    await parentTask.save();
+
+    const populatedSubTasks = await Task.find({ _id: { $in: subTasks } })
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role");
+
+    res.status(201).json({ 
+      success: true, 
+      message: `Created ${subTasks.length} sub-tasks successfully.`, 
+      subTasks: populatedSubTasks,
+      parentTask: parentTask
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // 📌 Get Task by ID
 export const getTaskById = async (req, res) => {
   try {
     const task = await Task.findById(req.params.id)
-      .populate("assignedBy", "name email employeeId")
-      .populate("assignedTo", "name email employeeId")
-      .populate("taskHistory.updatedBy", "name email employeeId");
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
+      .populate("taskHistory.updatedBy", "name email employeeId")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId")
+      .populate("parentTask", "title taskType")
+      .populate("subTasks", "title status currentCount targetCount assignedTo");
 
     if (!task) {
       return res.status(404).json({ 
@@ -615,8 +879,12 @@ export const getTaskById = async (req, res) => {
     }
 
     // Check access rights
-    if (task.assignedTo._id.toString() !== req.employee._id.toString() && 
-        !["Team_Leader", "HR_Manager"].includes(req.employee.role)) {
+    const canView = task.assignedTo._id.toString() === req.employee._id.toString() ||
+                   task.assignedBy._id.toString() === req.employee._id.toString() ||
+                   req.employee.role === 'HR_Manager' ||
+                   (req.employee.role === 'Team_Leader' && task.assignedBy._id.toString() === req.employee._id.toString());
+
+    if (!canView) {
       return res.status(403).json({ 
         success: false,
         message: "Access denied." 
@@ -626,6 +894,72 @@ export const getTaskById = async (req, res) => {
     res.json({
       success: true,
       task
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 📌 Get Task Responses with Analytics
+export const getTaskResponses = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { status, submittedBy } = req.query;
+
+    const task = await Task.findById(taskId)
+      .populate("assignedBy", "name email employeeId role")
+      .populate("assignedTo", "name email employeeId role")
+      .populate("responses.submittedBy", "name email employeeId")
+      .populate("responses.reviewedBy", "name email employeeId");
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found." });
+    }
+
+    // Access control
+    const canView = req.employee.role === 'HR_Manager' ||
+                   (req.employee.role === 'Team_Leader' && task.assignedBy.toString() === req.employee._id.toString()) ||
+                   task.assignedTo.toString() === req.employee._id.toString();
+
+    if (!canView) {
+      return res.status(403).json({ success: false, message: "Access denied." });
+    }
+
+    let responses = task.responses;
+
+    // Apply filters
+    if (status) {
+      responses = responses.filter(r => r.status === status);
+    }
+    if (submittedBy) {
+      responses = responses.filter(r => r.submittedBy.toString() === submittedBy);
+    }
+
+    // Analytics
+    const analytics = {
+      total: task.responses.length,
+      submitted: task.responses.filter(r => r.status === 'Submitted').length,
+      approved: task.responses.filter(r => r.status === 'Approved').length,
+      rejected: task.responses.filter(r => r.status === 'Rejected').length,
+      needsReview: task.responses.filter(r => r.status === 'Needs Review').length,
+      progress: task.completionPercentage,
+      target: task.targetCount,
+      current: task.currentCount
+    };
+
+    res.json({ 
+      success: true, 
+      task: {
+        _id: task._id,
+        title: task.title,
+        taskType: task.taskType,
+        targetCount: task.targetCount,
+        currentCount: task.currentCount,
+        status: task.status,
+        formFields: task.formFields
+      },
+      responses,
+      analytics
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
