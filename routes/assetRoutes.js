@@ -1,5 +1,6 @@
 import express from 'express';
-import { authenticateToken, requireTeamLeader } from '../middlewares/authMiddleware.js';
+import multer from 'multer';
+import { authenticateToken, requireTeamLeader, requireRole } from '../middlewares/authMiddleware.js';
 import {
   createAsset,
   getAllAssets,
@@ -20,13 +21,46 @@ import {
   getAllAssetsHistory,
   employeeTransferAsset,
   getMyTransferableAssets,
-  getColleaguesForTransfer
+  getColleaguesForTransfer,
+  generateSampleExcel,
+  importAssetsFromExcel,
+  exportAssetsToExcel
 } from '../controllers/assetController.js';
+
+// Configure multer for Excel file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/excel/');
+  },
+  filename: (req, file, cb) => {
+    cb(null, `assets_import_${Date.now()}_${file.originalname}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+        file.mimetype === 'application/vnd.ms-excel') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel files are allowed'), false);
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(authenticateToken);
+
+// Excel routes (HR Manager only)
+router.get('/excel/sample', requireRole(['HR_Manager']), generateSampleExcel);
+router.post('/excel/import', requireRole(['HR_Manager']), upload.single('file'), importAssetsFromExcel);
+router.get('/excel/export', requireRole(['HR_Manager']), exportAssetsToExcel);
 
 // Asset CRUD routes
 router.post('/', createAsset);

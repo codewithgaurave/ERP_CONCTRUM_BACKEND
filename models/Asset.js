@@ -12,9 +12,15 @@ const assetSchema = new mongoose.Schema({
     trim: true
   },
   category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AssetCategory',
+    required: true
+  },
+  unit: {
     type: String,
     required: true,
-    enum: ['Laptop', 'Desktop', 'Mobile', 'Tablet', 'T-Shirt', 'Uniform', 'ID Card', 'Access Card', 'Headphones', 'Monitor', 'Keyboard', 'Mouse', 'Charger', 'Other']
+    enum: ['Piece', 'Set', 'Pair', 'Box', 'Pack', 'Unit', 'Meter', 'Kilogram', 'Liter', 'Other'],
+    default: 'Piece'
   },
   brand: {
     type: String,

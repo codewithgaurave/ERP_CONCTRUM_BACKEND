@@ -1,6 +1,10 @@
 import Asset from '../models/Asset.js';
+import AssetCategory from '../models/AssetCategory.js';
 import Employee from '../models/Employee.js';
 import { Counter } from '../models/Counter.js';
+import XLSX from 'xlsx';
+import path from 'path';
+import fs from 'fs';
 
 // Generate Asset ID
 const generateAssetId = async () => {
@@ -19,21 +23,41 @@ const generateAssetId = async () => {
 // Create Asset
 export const createAsset = async (req, res) => {
   try {
-    const assetId = await generateAssetId();
+    const { quantity = 1, ...assetData } = req.body;
+    const createdAssets = [];
     
-    const asset = new Asset({
-      ...req.body,
-      assetId,
-      createdBy: req.employee.id
-    });
+    // Validate quantity
+    if (quantity < 1 || quantity > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Quantity must be between 1 and 1000'
+      });
+    }
+    
+    // Create multiple assets
+    for (let i = 0; i < quantity; i++) {
+      const assetId = await generateAssetId();
+      
+      const asset = new Asset({
+        ...assetData,
+        assetId,
+        createdBy: req.employee.id
+      });
 
-    await asset.save();
-    await asset.populate('createdBy', 'name employeeId');
+      await asset.save();
+      await asset.populate('createdBy', 'name employeeId');
+      await asset.populate('category', 'name code');
+      
+      createdAssets.push(asset);
+    }
     
     res.status(201).json({
       success: true,
-      message: 'Asset created successfully',
-      asset
+      message: quantity === 1 
+        ? 'Asset created successfully' 
+        : `${quantity} assets created successfully`,
+      assets: createdAssets,
+      count: createdAssets.length
     });
   } catch (error) {
     res.status(400).json({
@@ -81,6 +105,7 @@ export const getAllAssets = async (req, res) => {
     const skip = (page - 1) * limit;
     
     const assets = await Asset.find(query)
+      .populate('category', 'name code')
       .populate('assignedTo.employee', 'name employeeId designation department')
       .populate('createdBy', 'name employeeId')
       .sort(sort)
@@ -1244,6 +1269,305 @@ export const getColleaguesForTransfer = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message
+    });
+  }
+};
+
+// Generate Sample Excel Template
+export const generateSampleExcel = async (req, res) => {
+  try {
+    // Get asset categories for reference
+    const categories = await AssetCategory.find({ isActive: true }).select('name code');
+    
+    const sampleData = [
+      {
+        'Asset Name': 'Dell Laptop',
+        'Category Code': categories[0]?.code || 'LAPTOP',
+        'Unit': 'Piece',
+        'Quantity': 1,
+        'Brand': 'Dell',
+        'Model': 'Inspiron 15',
+        'Serial Number': 'DL123456789',
+        'Purchase Date': '2024-01-15',
+        'Purchase Price': 45000,
+        'Condition': 'New',
+        'Status': 'Available',
+        'Location': 'IT Department',
+        'Description': 'Dell Inspiron 15 laptop for office use',
+        'Warranty Start Date': '2024-01-15',
+        'Warranty End Date': '2027-01-15',
+        'Warranty Provider': 'Dell India'
+      },
+      {
+        'Asset Name': 'HP Monitor',
+        'Category Code': categories[1]?.code || 'MONITOR',
+        'Unit': 'Piece',
+        'Quantity': 5,
+        'Brand': 'HP',
+        'Model': '24 inch LED',
+        'Serial Number': '', // Leave empty for bulk creation
+        'Purchase Date': '2024-02-01',
+        'Purchase Price': 12000,
+        'Condition': 'New',
+        'Status': 'Available',
+        'Location': 'IT Department',
+        'Description': 'HP 24 inch LED monitor - bulk order',
+        'Warranty Start Date': '2024-02-01',
+        'Warranty End Date': '2026-02-01',
+        'Warranty Provider': 'HP India'
+      }
+    ];
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+
+    // Add categories sheet for reference
+    const categoryData = categories.map(cat => ({
+      'Category Name': cat.name,
+      'Category Code': cat.code
+    }));
+    const categoryWs = XLSX.utils.json_to_sheet(categoryData);
+
+    // Add sheets to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets Sample');
+    XLSX.utils.book_append_sheet(wb, categoryWs, 'Categories');
+
+    // Generate buffer
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    // Set headers for file download
+    res.setHeader('Content-Disposition', 'attachment; filename=assets_sample_template.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error generating sample Excel file',
+      error: error.message
+    });
+  }
+};
+
+// Import Assets from Excel
+export const importAssetsFromExcel = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No Excel file uploaded'
+      });
+    }
+
+    // Read the uploaded Excel file
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Excel file is empty or invalid format'
+      });
+    }
+
+    const results = {
+      success: [],
+      errors: [],
+      total: data.length
+    };
+
+    // Get all categories for validation
+    const categories = await AssetCategory.find({ isActive: true });
+    const categoryMap = {};
+    categories.forEach(cat => {
+      categoryMap[cat.code] = cat._id;
+    });
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNumber = i + 2; // Excel row number (starting from 2)
+
+      try {
+        // Validate required fields
+        if (!row['Asset Name'] || !row['Category Code']) {
+          results.errors.push({
+            row: rowNumber,
+            error: 'Asset Name and Category Code are required'
+          });
+          continue;
+        }
+
+        // Validate category
+        const categoryId = categoryMap[row['Category Code']];
+        if (!categoryId) {
+          results.errors.push({
+            row: rowNumber,
+            error: `Invalid Category Code: ${row['Category Code']}`
+          });
+          continue;
+        }
+
+        // Get quantity (default to 1 if not specified)
+        const quantity = parseInt(row['Quantity']) || 1;
+        if (quantity < 1 || quantity > 1000) {
+          results.errors.push({
+            row: rowNumber,
+            error: 'Quantity must be between 1 and 1000'
+          });
+          continue;
+        }
+
+        // Create multiple assets based on quantity
+        for (let q = 0; q < quantity; q++) {
+          try {
+            // Generate unique asset ID for each asset
+            const assetId = await generateAssetId();
+
+            // Create asset object
+            const assetData = {
+              assetId,
+              name: row['Asset Name'],
+              category: categoryId,
+              unit: row['Unit'] || 'Piece',
+              brand: row['Brand'] || '',
+              model: row['Model'] || '',
+              serialNumber: quantity === 1 ? (row['Serial Number'] || '') : '', // Only use serial number for single items
+              purchaseDate: row['Purchase Date'] ? new Date(row['Purchase Date']) : null,
+              purchasePrice: row['Purchase Price'] || 0,
+              condition: row['Condition'] || 'New',
+              status: row['Status'] || 'Available',
+              location: row['Location'] || '',
+              description: row['Description'] || '',
+              createdBy: req.employee._id
+            };
+
+            // Add warranty information if provided
+            if (row['Warranty Start Date'] || row['Warranty End Date'] || row['Warranty Provider']) {
+              assetData.warranty = {
+                startDate: row['Warranty Start Date'] ? new Date(row['Warranty Start Date']) : null,
+                endDate: row['Warranty End Date'] ? new Date(row['Warranty End Date']) : null,
+                provider: row['Warranty Provider'] || ''
+              };
+            }
+
+            // Create asset
+            const asset = new Asset(assetData);
+            await asset.save();
+
+            results.success.push({
+              row: rowNumber,
+              assetId: asset.assetId,
+              name: asset.name,
+              quantity: q + 1 // Show which item in the quantity this is
+            });
+          } catch (assetError) {
+            results.errors.push({
+              row: rowNumber,
+              error: `Asset ${q + 1}/${quantity}: ${assetError.message}`
+            });
+          }
+        }
+
+      } catch (error) {
+        results.errors.push({
+          row: rowNumber,
+          error: error.message
+        });
+      }
+    }
+
+    // Clean up uploaded file
+    fs.unlinkSync(req.file.path);
+
+    res.json({
+      success: true,
+      message: `Import completed. ${results.success.length} assets imported successfully, ${results.errors.length} errors.`,
+      results
+    });
+
+  } catch (error) {
+    // Clean up uploaded file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error importing assets from Excel',
+      error: error.message
+    });
+  }
+};
+
+// Export Assets to Excel
+export const exportAssetsToExcel = async (req, res) => {
+  try {
+    const { category, status, condition } = req.query;
+    
+    const query = {};
+    if (category) query.category = category;
+    if (status) query.status = status;
+    if (condition) query.condition = condition;
+
+    const assets = await Asset.find(query)
+      .populate('category', 'name code')
+      .populate('assignedTo.employee', 'name employeeId')
+      .populate('createdBy', 'name employeeId')
+      .sort({ createdAt: -1 });
+
+    const exportData = assets.map(asset => {
+      const currentAssignment = asset.assignedTo.find(a => a.isActive);
+      
+      return {
+        'Asset ID': asset.assetId,
+        'Asset Name': asset.name,
+        'Category': asset.category?.name || '',
+        'Category Code': asset.category?.code || '',
+        'Unit': asset.unit,
+        'Brand': asset.brand || '',
+        'Model': asset.model || '',
+        'Serial Number': asset.serialNumber || '',
+        'Purchase Date': asset.purchaseDate ? asset.purchaseDate.toISOString().split('T')[0] : '',
+        'Purchase Price': asset.purchasePrice || 0,
+        'Condition': asset.condition,
+        'Status': asset.status,
+        'Location': asset.location || '',
+        'Description': asset.description || '',
+        'Assigned To': currentAssignment ? 
+          `${currentAssignment.employee.name.first} ${currentAssignment.employee.name.last} (${currentAssignment.employee.employeeId})` : '',
+        'Assigned Date': currentAssignment ? currentAssignment.assignedDate.toISOString().split('T')[0] : '',
+        'Warranty Start': asset.warranty?.startDate ? asset.warranty.startDate.toISOString().split('T')[0] : '',
+        'Warranty End': asset.warranty?.endDate ? asset.warranty.endDate.toISOString().split('T')[0] : '',
+        'Warranty Provider': asset.warranty?.provider || '',
+        'Created By': asset.createdBy ? `${asset.createdBy.name.first} ${asset.createdBy.name.last}` : '',
+        'Created Date': asset.createdAt.toISOString().split('T')[0]
+      };
+    });
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+
+    // Generate buffer
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    // Set headers for file download
+    const fileName = `assets_export_${new Date().toISOString().split('T')[0]}.xlsx`;
+    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting assets to Excel',
+      error: error.message
     });
   }
 };
